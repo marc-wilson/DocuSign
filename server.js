@@ -1,9 +1,7 @@
 const express = require('express');
 const passport = require('passport');
-const request = require('request');
 var session = require('express-session');
 var docusign = require('docusign-esign/src/index');
-const envelopeUrl = `https://demo.docusign.net/restApi/v2/accounts/4003313/envelopes`;
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +18,6 @@ app.use(passport.session());
 
 var hostUrl = 'http://' + host + ':' + port;
 
-// Configure Passport
 passport.use(new docusign.OAuthClient({
 		sandbox: true,
 		clientID: 'cd7de09e-6e24-4970-b909-624e875b8f68',
@@ -28,8 +25,6 @@ passport.use(new docusign.OAuthClient({
 		callbackURL: hostUrl + '/auth/callback'
 	},
 	function (accessToken, refreshToken, user, done) {
-		// Here we're just assigning the tokens to the user profile object but we
-		// could be using session storage or any other form of transient-ish storage
 		user.accessToken = accessToken;
 		user.refreshToken = refreshToken;
 		return done(null, user);
@@ -37,11 +32,11 @@ passport.use(new docusign.OAuthClient({
 ));
 
 app.get('/auth', function (req, res) {
-	passport.authenticate('docusign'/*, {state: 'optional state'}*/)(req, res);
+	passport.authenticate('docusign')(req, res);
 });
 
 app.get('/auth/callback', function (req, res) {
-	passport.authenticate('docusign'/*, {state: 'optional state'}*/, function (err, user) {
+	passport.authenticate('docusign', function (err, user) {
 		if (err) {
 			return res.send(err);
 		}
@@ -49,35 +44,28 @@ app.get('/auth/callback', function (req, res) {
 			return res.redirect('/auth');
 		}
 
-		// getting the API client ready
 		var apiClient = new docusign.ApiClient();
-		// for production environment update to "www.docusign.net/restapi"
 		var BaseUrl = 'https://demo.docusign.net/restapi';
 		apiClient.setBasePath(BaseUrl);
 		apiClient.addDefaultHeader('Authorization', 'Bearer ' + user.accessToken);
 
-		// creating an instance of the authentication API
 		var authApi = new docusign.AuthenticationApi(apiClient);
 		var loginOps = {};
 		loginOps.apiPassword = 'true';
 		loginOps.includeAccountIdGuid = 'true';
-		// making login call. we could also use DocuSign OAuth userinfo call
 		authApi.login(loginOps, function (error, loginInfo, response) {
 			if (error) {
 				return res.send(error);
 			}
 			if (loginInfo) {
-				// list of user account(s)
-				// note that a given user may be a member of multiple accounts
+
 				var loginAccounts = loginInfo.loginAccounts;
 				var loginAccount = loginAccounts[0];
 				var baseUrl = loginAccount.baseUrl;
 				var accountDomain = baseUrl.split('/v2');
 
-				// below code required for production, no effect in demo (same domain)
 				apiClient.setBasePath(accountDomain[0]);
 				docusign.Configuration.default.setDefaultApiClient(apiClient);
-				// return the list of accounts to the browser
 				postIt(loginAccount);
 				return res.send(loginAccounts);
 			}
@@ -93,35 +81,40 @@ app.listen(port, host, function (err) {
 });
 
 function postIt(loginAccount) {
-	var templateId = '7decf5f8-b499-4b51-8c3c-7c3a2702eefa';
-	// create a new envelope object that we will manage the signature request through
 	var envDef = new docusign.EnvelopeDefinition();
 	envDef.emailSubject = 'Please sign this document sent from Node SDK';
-	envDef.templateId = templateId;
-
-	// create a template role with a valid templateId and roleName and assign signer info
-	var tRole = new docusign.TemplateRole();
-	tRole.roleName = '';
-	tRole.name = 'marc';
-	tRole.email = 'docusignmarc@gmail.com';
-
-	// create a list of template roles and add our newly created role
-	var templateRolesList = [];
-	templateRolesList.push(tRole);
-
-	// assign template role(s) to the envelope
-	envDef.templateRoles = templateRolesList;
-
-	// send the envelope by setting |status| to 'sent'. To save as a draft set to 'created'
 	envDef.status = 'sent';
+	envDef.documents = [
+		{
+			documentId: 1,
+			name: 'myDocTest1.pdf',
+			documentBase64: getBase64()
+		}
+	];
+	envDef.recipients = {
+		signers: [
+			{
+				name: 'Marc Wilson',
+				email: 'docusignmarc@gmail.com',
+				recipientId: 1,
+				tabs: {
+					signHereTabs: [
+						{
+							xPosition: 25,
+							yPosition: 50,
+							documentId: 1,
+							pageNumber: 1
+						}
+					]
+				}
+			}
 
-	// use the |accountId| we retrieved through the Login API to create the Envelope
+		]
+	};
+
 	var accountId = loginAccount.accountId;
-
-	// instantiate a new EnvelopesApi object
 	var envelopesApi = new docusign.EnvelopesApi();
 
-	// call the createEnvelope() API
 	envelopesApi.createEnvelope(accountId, {'envelopeDefinition': envDef}, function (err, envelopeSummary, response) {
 		if (err) {
 			console.log(err);
